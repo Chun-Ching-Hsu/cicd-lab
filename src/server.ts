@@ -1,4 +1,6 @@
 import { buildApp } from './app';
+const     greeting    =      "hello"   ;
+console.log(greeting);
 
 const app = buildApp({ logger: true });
 const port = Number(process.env.PORT || 3000);
