@@ -1,0 +1,168 @@
+name: CI 313554033
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: ci-313554033-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: TypeScript Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tsc --noEmit
+        run: npm run typecheck
+
+      - name: Append step summary
+        if: always()
+        run: |
+          {
+            echo "## TypeScript Typecheck"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo ":white_check_mark: \`tsc --noEmit\` passed."
+            else
+              echo ":x: \`tsc --noEmit\` failed. See the job log above for details."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  prettier:
+    name: Prettier Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run prettier --check .
+        run: npm run format:check
+
+      - name: Append step summary
+        if: always()
+        run: |
+          {
+            echo "## Prettier Format Check"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo ":white_check_mark: \`prettier --check .\` passed."
+            else
+              echo ":x: \`prettier --check .\` failed. Run \`npm run format\` locally to fix."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Vitest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests (with JUnit reporter)
+        run: |
+          mkdir -p reports
+          npm test -- \
+            --reporter=default \
+            --reporter=junit \
+            --outputFile.junit=reports/vitest-junit.xml
+
+      - name: Publish test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Vitest Results
+          path: reports/vitest-junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      - name: Upload test report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-report-313554033
+          path: reports/
+          if-no-files-found: warn
+
+      - name: Append step summary
+        if: always()
+        run: |
+          {
+            echo "## Vitest Test Results"
+            echo ""
+            if [ -f reports/vitest-junit.xml ]; then
+              TOTAL=$(grep -oE 'tests="[0-9]+"'    reports/vitest-junit.xml | head -1 | grep -oE '[0-9]+')
+              FAILS=$(grep -oE 'failures="[0-9]+"' reports/vitest-junit.xml | head -1 | grep -oE '[0-9]+')
+              ERRORS=$(grep -oE 'errors="[0-9]+"'  reports/vitest-junit.xml | head -1 | grep -oE '[0-9]+')
+              echo "| Metric | Count |"
+              echo "| --- | --- |"
+              echo "| Total    | ${TOTAL:-0} |"
+              echo "| Failures | ${FAILS:-0} |"
+              echo "| Errors   | ${ERRORS:-0} |"
+            else
+              echo ":warning: JUnit report not found."
+            fi
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo ":white_check_mark: All tests passed."
+            else
+              echo ":x: One or more tests failed. See the Vitest Results check above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  ci-status:
+    name: CI Status (aggregate)
+    needs: [typecheck, prettier, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any check failed
+        run: |
+          echo "typecheck: ${{ needs.typecheck.result }}"
+          echo "prettier : ${{ needs.prettier.result }}"
+          echo "test     : ${{ needs.test.result }}"
+          if [ "${{ needs.typecheck.result }}" != "success" ] || \
+             [ "${{ needs.prettier.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}"      != "success" ]; then
+            echo "::error::One or more required checks failed"
+            exit 1
+          fi
+          echo "All required checks passed."
